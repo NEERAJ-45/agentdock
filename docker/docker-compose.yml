@@ -1,0 +1,30 @@
+# Phases 1-3: manual multi-instance setup. The Runtime Manager (Phase 4+) creates the same containers via the Docker API.
+x-opencode: &opencode
+  build: ./opencode
+  image: agentdock:latest
+  init: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: ${INSTANCE_MEMORY:-2g}
+  cpus: ${INSTANCE_CPUS:-2}
+  pids_limit: 512
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "opencode", "--version"]
+    interval: 30s
+services:
+  opencode-a:
+    <<: *opencode
+    container_name: oc-a
+    volumes:
+      - ${WORKSPACE_PATH}:/workspace:rw     # shared project (host = source of truth)
+      - oc-a-config:/config                  # isolated auth/settings/sessions
+  opencode-b:
+    <<: *opencode
+    container_name: oc-b
+    volumes:
+      - ${WORKSPACE_PATH}:/workspace:rw
+      - oc-b-config:/config
+volumes:
+  oc-a-config:
+  oc-b-config:
