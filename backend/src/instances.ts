@@ -1,6 +1,21 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'; import fs from 'node:fs';
 import { db, Row } from './db.js'; import { docker } from './docker.js'; import { config } from './config.js';
 import { getWorkspace } from './workspaces.js'; import { profileDir, profileEnv } from './profiles.js'; import { logEvent } from './bus.js';
+
+const readEnvFile = (file: string): string[] => {
+  try {
+    return fs.readFileSync(file, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#') && l.includes('='));
+  } catch { return []; }
+};
+
+// Base server env (shared creds such as MONGODB_URI) then the profile's own keys override it.
+function instanceEnv(profile?: string | null): string[] {
+  const merged = new Map<string, string>();
+  const put = (line: string) => { const i = line.indexOf('='); if (i > 0) merged.set(line.slice(0, i), line); };
+  if (config.instanceEnvFile) readEnvFile(config.instanceEnvFile).forEach(put);
+  if (profile) profileEnv(profile).forEach(put);
+  return [...merged.values()];
+}
 
 export const getInstance = (id: string): Row => db.prepare('select * from instances where id=?').get(id);
 
@@ -9,10 +24,11 @@ export async function createInstance(name: string, workspaceId: string, profile?
   const ws = getWorkspace(workspaceId); if (!ws) throw new Error('Unknown workspace');
   const id = randomUUID();
   const c = await docker.createContainer({
-    name: `oc-${name}`, Image: config.image, Env: profile ? profileEnv(profile) : [], Labels: { 'agentdock': '1', instance: id },
+    name: `oc-${name}`, Image: config.image, Env: instanceEnv(profile), Labels: { 'agentdock': '1', instance: id },
     Healthcheck: { Test: ['CMD', 'opencode', '--version'], Interval: 30e9, Timeout: 10e9, Retries: 3 },
     HostConfig: {
       Binds: [`${ws.path}:/workspace:rw`, profile ? `${profileDir(profile)}:/config` : `oc-${name}-config:/config`], // workspace vs config mounts separated
+      ...(config.network ? { NetworkMode: config.network } : {}),
       Memory: config.memory, NanoCpus: config.cpus * 1e9, PidsLimit: 512,
       CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges:true'], RestartPolicy: { Name: 'unless-stopped' }, Init: true,
     },

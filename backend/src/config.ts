@@ -9,6 +9,8 @@ export const config = {
   cpus: +(process.env.INSTANCE_CPUS ?? 2),
   cooldownMs: +(process.env.QUOTA_COOLDOWN_MIN ?? 60) * 60_000,
   profilesDir: process.env.PROFILES_DIR ?? path.resolve('../data/profiles'),
+  instanceEnvFile: process.env.INSTANCE_ENV_FILE ?? '',
+  network: process.env.INSTANCE_NETWORK ?? '',
   maxInstances: +(process.env.MAX_INSTANCES ?? 6),
   autoSwitch: process.env.AUTO_SWITCH === 'true',
 };

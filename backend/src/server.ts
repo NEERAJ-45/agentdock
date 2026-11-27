@@ -2,11 +2,17 @@ import Fastify from 'fastify'; import cors from '@fastify/cors'; import websocke
 import { timingSafeEqual } from 'node:crypto'; import { z } from 'zod';
 import { config } from './config.js'; import { db, Row } from './db.js'; import { bus } from './bus.js';
 import { docker, stats } from './docker.js';
-import { listProfiles } from './profiles.js'; import * as ws from './workspaces.js'; import * as inst from './instances.js'; import * as tasks from './tasks.js';
+import { listProfiles } from './profiles.js'; import * as ws from './workspaces.js'; import * as inst from './instances.js'; import * as tasks from './tasks.js'; import * as term from './terminals.js';
 
 const app = Fastify({ logger: { level: 'info' } });
 await app.register(cors, { origin: [/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/] });
 await app.register(websocket);
+// Treat an empty JSON body as {} so body-less POST/DELETE calls (cancel, terminal, control) don't 400.
+app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+  const text = (body as string).trim();
+  if (!text) return done(null, {});
+  try { done(null, JSON.parse(text)); } catch (e) { done(e as Error); }
+});
 
 const ok = (t?: string) => { const a = Buffer.from(t ?? ''), b = Buffer.from(config.token); return a.length === b.length && timingSafeEqual(a, b); };
 app.addHook('onRequest', async (req, reply) => {
@@ -37,6 +43,11 @@ app.post('/api/instances/:id/:action', async req => {
 app.delete('/api/instances/:id', async req => { await inst.removeInstance((req.params as any).id); return { ok: true }; });
 app.get('/api/instances/:id/stats', async req => { const r = inst.getInstance((req.params as any).id); if (!r) throw new Error('Unknown instance'); return stats(r.container_id); });
 app.get('/api/instances/:id/logs', async req => ({ logs: await inst.logs((req.params as any).id) }));
+app.post('/api/instances/:id/terminal', async req => term.openTerminal((req.params as any).id));
+app.get('/api/terminals/:sid', async req => term.readTerminal((req.params as any).sid, +((req.query as any).cursor ?? 0) || 0));
+app.post('/api/terminals/:sid/input', async req => { const b = z.object({ data: z.string() }).parse(req.body); return term.writeTerminal((req.params as any).sid, b.data); });
+app.post('/api/terminals/:sid/resize', async req => { const b = z.object({ cols: z.number(), rows: z.number() }).parse(req.body); return term.resizeTerminal((req.params as any).sid, b.cols, b.rows); });
+app.delete('/api/terminals/:sid', async req => term.closeTerminal((req.params as any).sid));
 app.get('/api/tasks', async () => db.prepare('select * from tasks order by created_at desc limit 100').all());
 app.post('/api/tasks', async req => { const b = z.object({ workspaceId: z.string(), prompt: z.string().min(1), instanceId: z.string().optional() }).parse(req.body); return tasks.submitTask(b.workspaceId, b.prompt, b.instanceId); });
 app.get('/api/tasks/:id', async req => {
